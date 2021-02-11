@@ -1,6 +1,3 @@
-# This spec only works on a single node kubernetes cluster(e.g. typical k8s cluster setup for dev using kind/minikube or single node AWS EKS cluster etc)
-# as it uses local disk as "deep storage".
-#
 apiVersion: "druid.apache.org/v1alpha1"
 kind: "Druid"
 metadata:
@@ -26,6 +23,7 @@ spec:
         type: ClusterIP
         clusterIP: None
   commonConfigMountPath: "/opt/druid/conf/druid/cluster/_common"
+  disablePVCDeletionFinalizer: false
   jvm.options: |-
     -server
     -XX:MaxDirectMemorySize=10240g
@@ -56,20 +54,22 @@ spec:
     druid.zk.service.compress=false
 
     # Metadata Store
-    druid.metadata.storage.type=derby
-    druid.metadata.storage.connector.connectURI=jdbc:derby://localhost:1527/druid/data/derbydb/metadata.db;create=true
-    druid.metadata.storage.connector.host=localhost
-    druid.metadata.storage.connector.port=1527
-    druid.metadata.storage.connector.createTables=true
+    druid.metadata.storage.type=postgresql
+    druid.metadata.storage.connector.connectURI=
+    druid.metadata.storage.connector.user=
+    druid.metadata.storage.connector.password=
+    druid.metadata.postgres.useSSL=true
 
     # Deep Storage
-    druid.storage.type=local
-    druid.storage.storageDirectory=/druid/deepstorage
+    druid.storage.type=s3
+    druid.storage.bucket=poc-druid1
+    druid.storage.baseKey=solutions
+    druid.storage.sse.type=s3
 
     #
     # Extensions
     #
-    druid.extensions.loadList=["druid-kafka-indexing-service"]
+    druid.extensions.loadList=["postgresql-metadata-storage", "druid-s3-extensions"]
 
     #
     # Service discovery
@@ -83,15 +83,9 @@ spec:
   volumeMounts:
     - mountPath: /druid/data
       name: data-volume
-    - mountPath: /druid/deepstorage
-      name: deepstorage-volume
   volumes:
     - name: data-volume
       emptyDir: {}
-    - name: deepstorage-volume
-      hostPath:
-        path: /tmp/druid/deepstorage
-        type: DirectoryOrCreate
   env:
     - name: POD_NAME
       valueFrom:
@@ -104,12 +98,8 @@ spec:
 
   nodes:
     brokers:
-      # Optionally specify for running broker as Deployment
       # kind: Deployment
       nodeType: "broker"
-      # Optionally specify for broker nodes
-      # imagePullSecrets:
-      # - name: tutu
       druid.port: 8088
       nodeConfigMountPath: "/opt/druid/conf/druid/cluster/query/broker"
       replicas: 1
@@ -130,7 +120,6 @@ spec:
         -Xms512M
 
     coordinators:
-      # Optionally specify for running coordinator as Deployment
       # kind: Deployment
       nodeType: "coordinator"
       druid.port: 8088
@@ -158,17 +147,19 @@ spec:
       nodeConfigMountPath: "/opt/druid/conf/druid/cluster/data/historical"
       replicas: 1
       runtime.properties: |
+        druid.historical.cache.useCache=true
+        druid.historical.cache.populateCache=true
         druid.service=druid/historical
         druid.server.http.numThreads=5
         druid.processing.buffer.sizeBytes=536870912
         druid.processing.numMergeBuffers=1
         druid.processing.numThreads=1
         # Segment storage
-        druid.segmentCache.locations=[{\"path\":\"/druid/data/segments\",\"maxSize\":10737418240}]
+        druid.segmentCache.locations=[{\"path\":\"/druid/data/segments\",\"maxSize\":500000000000}]
         druid.server.maxSize=10737418240
       extra.jvm.options: |-
-        -Xmx512M
-        -Xms512M
+        -Xmx2g
+        -Xms2g
 
     routers:
       nodeType: "router"

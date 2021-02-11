@@ -181,7 +181,7 @@ spec:
       extra.jvm.options: |-
         -Xmx512M
         -Xms512M
-          
+
     routers:
       nodeType: "router"
       druid.port: 8088
@@ -214,8 +214,7 @@ spec:
         druid.router.coordinatorServiceName=druid/coordinator
 
         # Management proxy to coordinator / overlord: required for unified web console.
-        druid.router.managementProxy.enabled=true       
+        druid.router.managementProxy.enabled=true
       extra.jvm.options: |-
         -Xmx512M
         -Xms512M
-          
