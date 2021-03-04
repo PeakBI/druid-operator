@@ -1,13 +1,9 @@
 apiVersion: "druid.apache.org/v1alpha1"
 kind: "Druid"
 metadata:
-  name: smoke-test
-  namespace: default
+  name: tiny-cluster
 spec:
-  image: druidio/druid:test
-  # Optionally specify image for all nodes. Can be specify on nodes also
-  # imagePullSecrets:
-  # - name: tutu
+  image: apache/druid:0.20.1
   startScript: /druid.sh
   podLabels:
     environment: stage
@@ -16,7 +12,7 @@ spec:
     dummykey: dummyval
   readinessProbe:
     httpGet:
-      path: /status
+      path: /status/health
       port: 8088
   securityContext:
     fsGroup: 1000
@@ -27,6 +23,7 @@ spec:
         type: ClusterIP
         clusterIP: None
   commonConfigMountPath: "/opt/druid/conf/druid/cluster/_common"
+  disablePVCDeletionFinalizer: false
   jvm.options: |-
     -server
     -XX:MaxDirectMemorySize=10240g
@@ -34,7 +31,7 @@ spec:
     -Dfile.encoding=UTF-8
     -Dlog4j.debug
     -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
-    -Djava.io.tmpdir=/druid/data/tmp
+    -Djava.io.tmpdir=/druid/data
   log4j.config: |-
     <?xml version="1.0" encoding="UTF-8" ?>
     <Configuration status="WARN">
@@ -52,23 +49,27 @@ spec:
   common.runtime.properties: |
 
     # Zookeeper
+    druid.zk.service.host=tiny-cluster-zk-0.tiny-cluster-zk
+    druid.zk.paths.base=/druid
+    druid.zk.service.compress=false
 
     # Metadata Store
-    druid.metadata.storage.type=derby
-    druid.metadata.storage.type=derby
-    druid.metadata.storage.connector.connectURI=jdbc:derby://localhost:1527/druid/data/derbydb/metadata.db;create=true
-    druid.metadata.storage.connector.host=localhost
-    druid.metadata.storage.connector.port=1527
-    druid.metadata.storage.connector.createTables=true
+    druid.metadata.storage.type=postgresql
+    druid.metadata.storage.connector.connectURI=
+    druid.metadata.storage.connector.user=
+    druid.metadata.storage.connector.password=
+    druid.metadata.postgres.useSSL=true
 
     # Deep Storage
-    druid.storage.type=local
-    druid.storage.storageDirectory=/druid/deepstorage
+    druid.storage.type=s3
+    druid.storage.bucket=poc-druid1
+    druid.storage.baseKey=solutions
+    druid.storage.sse.type=s3
 
     #
     # Extensions
     #
-    druid.extensions.loadList=[""]
+    druid.extensions.loadList=["postgresql-metadata-storage", "druid-s3-extensions"]
 
     #
     # Service discovery
@@ -76,24 +77,15 @@ spec:
     druid.selectors.indexing.serviceName=druid/overlord
     druid.selectors.coordinator.serviceName=druid/coordinator
 
-    druid.serverview.type=http
-    druid.coordinator.loadqueuepeon.type=http
-    druid.indexer.runner.type=httpRemote
     druid.indexer.logs.type=file
     druid.indexer.logs.directory=/druid/data/indexing-logs
     druid.lookup.enableLookupSyncOnStartup=false
   volumeMounts:
     - mountPath: /druid/data
       name: data-volume
-    - mountPath: /druid/deepstorage
-      name: deepstorage-volume
   volumes:
     - name: data-volume
       emptyDir: {}
-    - name: deepstorage-volume
-      hostPath:
-        path: /tmp/druid/deepstorage
-        type: DirectoryOrCreate
   env:
     - name: POD_NAME
       valueFrom:
@@ -106,25 +98,11 @@ spec:
 
   nodes:
     brokers:
-      # Optionally specify for running broker as Deployment
       # kind: Deployment
       nodeType: "broker"
-      kind: "Deployment"
-      # Optionally specify for broker nodes
-      # imagePullSecrets:
-      # - name: tutu
       druid.port: 8088
       nodeConfigMountPath: "/opt/druid/conf/druid/cluster/query/broker"
       replicas: 1
-      podDisruptionBudgetSpec:
-        minAvailable: 1
-      hpAutoscaler:
-        maxReplicas: 3
-        minReplicas: 1
-        scaleTargetRef:
-          apiVersion: apps/v1
-          kind: Deployment
-          name: druid-smoke-test-brokers
       runtime.properties: |
         druid.service=druid/broker
 
@@ -142,7 +120,6 @@ spec:
         -Xms512M
 
     coordinators:
-      # Optionally specify for running coordinator as Deployment
       # kind: Deployment
       nodeType: "coordinator"
       druid.port: 8088
@@ -170,36 +147,25 @@ spec:
       nodeConfigMountPath: "/opt/druid/conf/druid/cluster/data/historical"
       replicas: 1
       runtime.properties: |
+        druid.historical.cache.useCache=true
+        druid.historical.cache.populateCache=true
         druid.service=druid/historical
         druid.server.http.numThreads=5
-        druid.processing.buffer.sizeBytes=1
+        druid.processing.buffer.sizeBytes=536870912
         druid.processing.numMergeBuffers=1
         druid.processing.numThreads=1
         # Segment storage
-        druid.segmentCache.locations=[{\"path\":\"/druid/data/segments\",\"maxSize\":10737418240}]
+        druid.segmentCache.locations=[{\"path\":\"/druid/data/segments\",\"maxSize\":500000000000}]
         druid.server.maxSize=10737418240
       extra.jvm.options: |-
-        -Xmx512M
-        -Xms512M
+        -Xmx2g
+        -Xms2g
 
     routers:
       nodeType: "router"
       druid.port: 8088
       nodeConfigMountPath: "/opt/druid/conf/druid/cluster/query/router"
       replicas: 1
-      ingress:
-        tls:
-         - hosts:
-            - sslexample.foo.com
-           secretName: testsecret-tls
-        rules:
-         - host: sslexample.foo.com
-           http:
-             paths:
-             - path: /
-               backend:
-                 serviceName: service1
-                 servicePort: 80
       runtime.properties: |
         druid.service=druid/router
 
